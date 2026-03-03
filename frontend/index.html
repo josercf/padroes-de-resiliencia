@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Padroes de Resiliencia - Demo</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', sans-serif; background: #1a1a2e; color: #e0e0e0; min-height: 100vh; }
+
+    .header { background: #16213e; padding: 20px 30px; border-bottom: 3px solid #e94560; }
+    .header h1 { font-size: 1.4em; color: #fff; }
+    .header p { font-size: 0.85em; color: #aaa; margin-top: 4px; }
+
+    .container { display: grid; grid-template-columns: 300px 1fr; gap: 20px; padding: 20px 30px; max-width: 1200px; }
+
+    /* Painel lateral */
+    .panel { background: #16213e; border-radius: 8px; padding: 20px; }
+    .panel h2 { font-size: 1em; margin-bottom: 15px; color: #e94560; }
+
+    .status-card { background: #0f3460; border-radius: 6px; padding: 12px; margin-bottom: 10px; }
+    .status-card .label { font-size: 0.75em; color: #888; text-transform: uppercase; letter-spacing: 1px; }
+    .status-card .value { font-size: 1.3em; font-weight: 700; margin-top: 4px; }
+
+    .state-closed { color: #2ecc71; }
+    .state-open { color: #e74c3c; }
+    .state-halfopen { color: #f39c12; }
+
+    .btn { display: block; width: 100%; padding: 10px; margin-bottom: 8px; border: none; border-radius: 6px;
+           font-size: 0.9em; font-weight: 600; cursor: pointer; transition: opacity 0.2s; }
+    .btn:hover { opacity: 0.85; }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn-primary { background: #0f3460; color: #fff; border: 1px solid #e94560; }
+    .btn-danger { background: #e74c3c; color: #fff; }
+    .btn-success { background: #2ecc71; color: #fff; }
+    .btn-warning { background: #f39c12; color: #1a1a2e; }
+
+    .separator { border: none; border-top: 1px solid #333; margin: 15px 0; }
+
+    /* Log */
+    .log-panel { background: #16213e; border-radius: 8px; padding: 20px; display: flex; flex-direction: column; }
+    .log-panel h2 { font-size: 1em; margin-bottom: 10px; color: #e94560; display: flex; justify-content: space-between; align-items: center; }
+    .log-panel h2 button { background: none; border: 1px solid #555; color: #888; padding: 3px 10px; border-radius: 4px; cursor: pointer; font-size: 0.8em; }
+
+    .log-area { flex: 1; background: #0a0a1a; border-radius: 6px; padding: 12px; font-family: 'Courier New', monospace;
+                font-size: 0.8em; overflow-y: auto; max-height: 500px; line-height: 1.6; }
+
+    .log-entry { padding: 2px 0; border-bottom: 1px solid #1a1a2e; }
+    .log-time { color: #555; }
+    .log-success { color: #2ecc71; }
+    .log-error { color: #e74c3c; }
+    .log-fallback { color: #f39c12; }
+    .log-bulkhead { color: #9b59b6; }
+    .log-info { color: #3498db; }
+
+    /* Indicador visual do circuito */
+    .circuit-visual { display: flex; align-items: center; gap: 8px; margin: 15px 0; padding: 10px; background: #0f3460; border-radius: 6px; }
+    .circuit-dot { width: 12px; height: 12px; border-radius: 50%; }
+    .circuit-line { flex: 1; height: 3px; border-radius: 2px; }
+    .circuit-visual .label { font-size: 0.7em; color: #888; }
+
+    @media (max-width: 768px) { .container { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>Padroes de Resiliencia -- Demo Interativa</h1>
+    <p>Circuit Breaker + Retry + Bulkhead + Fallback com .NET e Polly</p>
+  </div>
+
+  <div class="container">
+    <div class="panel">
+      <h2>Status</h2>
+
+      <div class="status-card">
+        <div class="label">Circuit Breaker</div>
+        <div class="value" id="circuitState">--</div>
+      </div>
+
+      <div class="status-card">
+        <div class="label">Modo de Falha</div>
+        <div class="value" id="failMode">Desativado</div>
+      </div>
+
+      <div class="status-card">
+        <div class="label">Bulkhead (slots livres)</div>
+        <div class="value" id="bulkheadSlots">--</div>
+      </div>
+
+      <div class="circuit-visual" id="circuitVisual">
+        <span class="label">CLI</span>
+        <div class="circuit-dot" id="circuitDotLeft"></div>
+        <div class="circuit-line" id="circuitLine"></div>
+        <div class="circuit-dot" id="circuitDotRight"></div>
+        <span class="label">SRV</span>
+      </div>
+
+      <hr class="separator" />
+      <h2>Acoes</h2>
+
+      <button class="btn btn-primary" onclick="sendRequest()">Enviar Requisicao</button>
+      <button class="btn btn-warning" onclick="sendBurst()">Enviar Rajada (10x)</button>
+
+      <hr class="separator" />
+
+      <button class="btn btn-danger" id="btnFail" onclick="toggleFailure(true)">Forcar Falha</button>
+      <button class="btn btn-success" id="btnRestore" onclick="toggleFailure(false)" disabled>Restaurar Servico</button>
+    </div>
+
+    <div class="log-panel">
+      <h2>
+        Log de Eventos
+        <button onclick="clearLog()">Limpar</button>
+      </h2>
+      <div class="log-area" id="logArea">
+        <div class="log-entry log-info"><span class="log-time">[--:--:--]</span> Pronto. Use os botoes para interagir.</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const logArea = document.getElementById('logArea');
+    let requestCounter = 0;
+
+    function timestamp() {
+      return new Date().toLocaleTimeString('pt-BR');
+    }
+
+    function log(message, type) {
+      const entry = document.createElement('div');
+      entry.className = 'log-entry log-' + type;
+      entry.innerHTML = '<span class="log-time">[' + timestamp() + ']</span> ' + message;
+      logArea.appendChild(entry);
+      logArea.scrollTop = logArea.scrollHeight;
+    }
+
+    function clearLog() {
+      logArea.innerHTML = '';
+      log('Log limpo.', 'info');
+    }
+
+    function updateCircuitVisual(state) {
+      const el = document.getElementById('circuitState');
+      const dotL = document.getElementById('circuitDotLeft');
+      const dotR = document.getElementById('circuitDotRight');
+      const line = document.getElementById('circuitLine');
+
+      const colors = { Closed: '#2ecc71', Open: '#e74c3c', HalfOpen: '#f39c12' };
+      const color = colors[state] || '#555';
+      const cssClass = 'state-' + (state === 'HalfOpen' ? 'halfopen' : state.toLowerCase());
+
+      el.textContent = state === 'HalfOpen' ? 'Half-Open' : state;
+      el.className = 'value ' + cssClass;
+
+      dotL.style.background = color;
+      dotR.style.background = state === 'Open' ? '#555' : color;
+      line.style.background = state === 'Open' ? '#e74c3c44' : color;
+      line.style.height = state === 'Open' ? '1px' : '3px';
+    }
+
+    async function fetchStatus() {
+      try {
+        const res = await fetch('/api/status');
+        const data = await res.json();
+        updateCircuitVisual(data.circuitState);
+        document.getElementById('bulkheadSlots').textContent = data.bulkheadAvailable + ' / ' + data.bulkheadMax;
+        document.getElementById('failMode').textContent = data.forceFail ? 'ATIVADO' : 'Desativado';
+        document.getElementById('failMode').className = 'value ' + (data.forceFail ? 'state-open' : 'state-closed');
+      } catch (e) {
+        // silently fail
+      }
+    }
+
+    async function sendRequest() {
+      requestCounter++;
+      const id = requestCounter;
+      log('#' + id + ' Enviando requisicao...', 'info');
+
+      try {
+        const res = await fetch('/api/data');
+        const data = await res.json();
+
+        if (data.pattern === 'success') {
+          log('#' + id + ' Sucesso: ' + data.message + ' [Circuit: ' + data.circuitState + ']', 'success');
+        } else if (data.pattern === 'fallback') {
+          log('#' + id + ' Fallback: ' + data.message + ' [Circuit: ' + data.circuitState + ']', 'fallback');
+        } else if (data.pattern === 'bulkhead') {
+          log('#' + id + ' Bulkhead: ' + data.message, 'bulkhead');
+        } else {
+          log('#' + id + ' Erro: ' + data.message + ' [Circuit: ' + data.circuitState + ']', 'error');
+        }
+      } catch (e) {
+        log('#' + id + ' Erro de rede: ' + e.message, 'error');
+      }
+
+      await fetchStatus();
+    }
+
+    async function sendBurst() {
+      log('--- Rajada: enviando 10 requisicoes simultaneas (demonstra Bulkhead) ---', 'info');
+      const promises = [];
+      for (let i = 0; i < 10; i++) {
+        promises.push(sendRequest());
+      }
+      await Promise.all(promises);
+      log('--- Rajada concluida ---', 'info');
+    }
+
+    async function toggleFailure(activate) {
+      const endpoint = activate ? '/api/force-failure' : '/api/restore';
+      try {
+        await fetch(endpoint, { method: 'POST' });
+        log(activate ? 'Modo de falha ATIVADO -- proximas requisicoes vao falhar' : 'Servico RESTAURADO -- proximas requisicoes devem funcionar', activate ? 'error' : 'success');
+        document.getElementById('btnFail').disabled = activate;
+        document.getElementById('btnRestore').disabled = !activate;
+      } catch (e) {
+        log('Erro ao alterar modo de falha: ' + e.message, 'error');
+      }
+      await fetchStatus();
+    }
+
+    // Polling do status a cada 2s
+    setInterval(fetchStatus, 2000);
+    fetchStatus();
+  </script>
+</body>
+</html>
